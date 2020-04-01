@@ -1,8 +1,8 @@
 # EZhttpd
 
 Support:
-    - Read Normal File / HTML page
-    - Execute CGI program
+- Read Normal File / HTML page
+- Execute CGI program
 
 ## Environment
 - Ubuntu 18.04
