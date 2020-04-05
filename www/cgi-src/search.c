@@ -22,7 +22,7 @@ int main(void)
     char val[BUF_MAX];
     int length, arg_len, ret;
 
-    if (strcmp(getenv("REQUEST_METHOD"), "POST")) {
+    if (strcmp(getenv("REQUEST_METHOD"), "GET")) {
         printf("Content-type: text/html\r\n");
         printf("\r\n");
 
@@ -33,12 +33,9 @@ int main(void)
         return 0;
     }
 
-    length = atoi(getenv("CONTENT_LENGTH")) + 1;
-    buf = malloc(length);
-    memset(buf, 0, length);
-    fgets(buf, length, stdin);
+    buf = strdup(getenv("QUERY_STRING"));
 
-    /* parse post argument */
+    /* parse get argument */
     if ((arg_begin = strstr(buf, "key=")) == NULL)
         goto ERROR;
 
@@ -118,7 +115,7 @@ ERROR:
 
     printf(PAGE_HEADER);
     printf("<h1>SEARCH</h1><br>");
-    printf("No 'key' or 'value'!<br>");
+    printf("No 'key'!<br>");
     printf(PAGE_FOOTER);
     return -1;
 }
