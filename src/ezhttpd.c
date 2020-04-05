@@ -14,12 +14,13 @@
 #include <sys/prctl.h>
 #include <signal.h>
 
+#include "http_request.h"
 #include "http_parser.h"
+#include "http_respond.h"
 #include "cgi_preprocess.h"
 #include "debug.h"
 
 #define MAX_CONNECTION 100000
-#define MAX_POST_PAR_NUM 100
 
 void respond(int, struct sockaddr_in *);
 void ez_log(int, http_request_rec *, struct sockaddr_in *);
@@ -125,234 +126,50 @@ int main(int argc, char **argv)
 
 void respond(int cfd, struct sockaddr_in *c_addr_ptr)
 {
-    const char *proto;
-    char *rbuf, *path;
-    int ret, len, status;
+    int ret, status;
     http_request_rec request = { 0 };
 
-    rbuf = malloc(65535);
+    http_init_request(&request);
 
-    ret = recv(cfd, rbuf, 65535, 0);
+    while (1) {
+        ret = http_handle_request(cfd, &request);
 
-    if (ret == -1) {
-        fprintf(stderr, "recv error\n");
-        goto RESPOND_EARLY_EXIT;
-    } else if (ret == 0) {
-        fprintf(stderr, "socket peer has performed an orderly shutdown\n");
-        goto RESPOND_EARLY_EXIT;
-    }
-
-    rbuf[ret] = '\0';
-
-    /* handle request header */
-    if(http_parser(rbuf, &request) == -1) {
-        fprintf(stderr, "error during parsing the request\n");
-        goto RESPOND_EARLY_EXIT;
-    }
+        switch (ret) {
+        case -1:
 #ifdef DEBUG
-    DEBUG_REQUEST_INFO;
+            printf("[O] timeout\n");
+            goto RESPOND_EXIT;
 #endif
-    
-    len = strlen(root) + strlen(request.req_path);
-    path = malloc(len + 1);
-    memset(path, 0, len + 1);
-    strcat(path, root);
-    strcat(path, request.req_path);
-
-    proto = http_protos[request.proto];
-
-#ifdef DEBUG
-    printf("[>] path: %s\n", path);
-#endif
-
-    if (request.req_ext == (char *)-1) {
-        /* path is a directory */
-        /* TODO: list directory */
-        write(cfd, proto, strlen(proto));
-        write(cfd, " 404 Not Found\r\n", 16);
-        write(cfd, "Server: ezhttpd\r\n", 17);
-        write(cfd, "\r\n", 2);
-        write(cfd, "<h1>Not Found, 88888</h1>", 25);
-
-        status = 404;
-        goto RESPOND_EXIT;
-    }
-
-    if (access(path, F_OK) != -1) {
-        if (!strncmp(request.req_ext, "html", 4)) {
-            FILE *fp;
-            char *fcontent;
-            long fsize;
-
-            fp = fopen(path, "rb");
-            if (fp == NULL)
-                goto NOT_FOUND;
-
-            fseek(fp, 0, SEEK_END);
-            fsize = ftell(fp);
-            fseek(fp, 0, SEEK_SET);
-
-            write(cfd, proto, strlen(proto));
-            write(cfd, " 200 OK\r\n", 9);
-            write(cfd, "Server: ezhttpd\r\n", 17);
-            write(cfd, "\r\n", 2);
-
-            /* read path */
-            fcontent = malloc(fsize + 1);
-            fread(fcontent, 1, fsize, fp);
-            fclose(fp);
-
-            fcontent[fsize] = 0;
-
-            write(cfd, fcontent, fsize);
-
-            free(fcontent);
-            status = 200;
-        } else if (!strncmp(request.req_ext, "cgi", 3)) {
-            int cgiin[2], cgiout[2];
-            pid_t cgi_pid;
-            char c;
-            cgi_rec cr = { 0 };
-
-            if (pipe(cgiin) == -1 || pipe(cgiout) == -1) {
-                fprintf(stderr, "create pipe error\n");
-                goto RESPOND_INTERNEL_ERROR;
-            }
-
-            if (cgi_preprocess(&cr, c_addr_ptr, &request) == -1) {
-                fprintf(stderr, "cgi preprocessing error\n");
-                goto RESPOND_INTERNEL_ERROR;
-            }
-#ifdef DEBUG
-            int debug_i = 0;
-            while (cr.rmv[debug_i] != NULL)
-                printf("[c] %s\n", cr.rmv[debug_i++]);
-            if (cr.rmb != NULL)
-                printf("[C] %s\n", cr.rmb);
-#endif
-
-            /* create a new process to execute cgi program */
-            if ((cgi_pid = fork()) < 0) {
-                fprintf(stderr, "fork cgi process error\n");
-                goto RESPOND_INTERNEL_ERROR;
-            }
-
-            if (cgi_pid == 0) {
-                char **cgi_argv;
-
-                cgi_argv = malloc(sizeof(char *) * 2);
-                cgi_argv[0] = path;
-                cgi_argv[1] = NULL;
-
-                // close unused fd
-                close(cgiin[1]);
-                close(cgiout[0]);
-
-                // redirect fd
-                dup2(cgiin[0], STDIN_FILENO);
-                dup2(cgiout[1], STDOUT_FILENO);
-
-                // close unused fd
-                close(cgiin[0]);
-                close(cgiout[1]);
-
-                /* execute cgi program */
-                execve(path, cgi_argv, cr.rmv);
-
-                /* error, should never reach */
-                exit(1);
-            }
-            // close unused fd
-            close(cgiin[0]);
-            close(cgiout[1]);
-
-            // write POST data to cgi program via pipe
-            if (cr.rmb != NULL)
-                write(cgiin[1], cr.rmb, strlen(cr.rmb));
-
-            write(cfd, proto, strlen(proto));
-            write(cfd, " 200 OK\r\n", 9);
-            write(cfd, "Server: ezhttpd\r\n", 17);
-            /* cgi program can write some custom header */
-
-            while (read(cgiout[0], &c, 1) > 0) {
-                write(cfd, &c, 1);
-            }
-
-            // close unused fd
-            close(cgiin[1]);
-            close(cgiout[0]);
-
-            status = 200;
-        } else {
-            FILE *fp;
-            char *fcontent;
-            long fsize;
-            char *s_fsize;
-
-            fp = fopen(path, "rb");
-            if (fp == NULL)
-                goto NOT_FOUND;
-
-            fseek(fp, 0, SEEK_END);
-            fsize = ftell(fp);
-            fseek(fp, 0, SEEK_SET);
-
-            s_fsize = malloc(0x70);
-            snprintf(s_fsize, 0x70, "%ld", fsize);
-
-            write(cfd, proto, strlen(proto));
-            write(cfd, " 200 OK\r\n", 9);
-            write(cfd, "Server: ezhttpd\r\n", 17);
-            write(cfd, "Content-Type: text/plain\r\n", 26);
-            write(cfd, "Content-Length: ", 16);
-            write(cfd, s_fsize, strlen(s_fsize));
-            write(cfd, "\r\n", 2);
-            write(cfd, "\r\n", 2);
-
-            /* read path */
-            fcontent = malloc(fsize + 1);
-            fread(fcontent, 1, fsize, fp);
-            fclose(fp);
-
-            fcontent[fsize] = 0;
-
-            write(cfd, fcontent, fsize);
-
-            free(fcontent);
-            status = 200;
+        case -2:
+        case -3:
+            goto RESPOND_EXIT;
         }
-    } else {
-NOT_FOUND:
-        /* path doesn't exist */
-        write(cfd, proto, strlen(proto));
-        write(cfd, " 404 Not Found\r\n", 16);
-        write(cfd, "Server: ezhttpd\r\n", 17);
-        write(cfd, "\r\n", 2);
-        write(cfd, "<h1>Not Found, 88888</h1>", 25);
-        status = 404;
-    }
 
-    if (0) {
-RESPOND_INTERNEL_ERROR:
-        write(cfd, proto, strlen(proto));
-        write(cfd, " 500 Internal Server Error\r\n", 28);
-        write(cfd, "Server: ezhttpd\r\n", 17);
-        write(cfd, "\r\n", 2);
-        write(cfd, "<h1>Internal Server Error</h1>", 30);
-        status = 500;
+#ifdef DEBUG
+        DEBUG_REQUEST_INFO;
+#endif
+
+        http_respond(cfd, &request, root, c_addr_ptr, &status);
+
+        /* log */
+        ez_log(status, &request, c_addr_ptr);
+
+        /* handle keep-alive mechanism */
+        if (!request.keep_alive || !request.keep_alive_amount)
+            break;
+        
+        --request.keep_alive_amount;
+
+        http_destroy_request(&request);
     }
 
 RESPOND_EXIT:
-    /* log */
-    ez_log(status, &request, c_addr_ptr);
+#ifdef DEBUG
+    printf("[T] close TCP connection\n");
+#endif
+    http_destroy_request(&request);
 
-    http_request_rec_destroy(&request);
-
-    free(path);
-
-RESPOND_EARLY_EXIT:
-    free(rbuf);
+    return;
 }
 
 inline 

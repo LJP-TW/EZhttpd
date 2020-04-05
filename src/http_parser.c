@@ -195,35 +195,11 @@ int http_parser(char *req_buf, http_request_rec *hrr)
     return 0;
 
 PARSE_HEADER_ERROR:
-    free(hrr->headers);
-
 PARSE_PROTO_ERROR:
-    if (get_parsed)
-        free(get_prm);
-    free(hrr->req_path);
-
 PARSE_ERROR:
+    http_destroy_request(hrr);
     fprintf(stderr, "request format error\n");
     return -1;
-}
-
-void http_request_rec_destroy(http_request_rec *hrr)
-{
-    int i = 0;
-    if (hrr->req_path)
-        free(hrr->req_path);
-    if (hrr->req_ext != NULL && hrr->req_ext != (char *)-1)
-        free(hrr->req_ext);
-
-    if (hrr->headers) {
-        while (hrr->headers[i] != NULL) {
-            free(hrr->headers[i++]);
-        }
-        free(hrr->headers);
-    }
-
-    if (hrr->post_data)
-        free(hrr->post_data);
 }
 
 int http_search_header(http_request_rec *hrr, const char *header_name, char *buf)
