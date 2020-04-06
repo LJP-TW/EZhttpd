@@ -2,6 +2,7 @@
 
 Support:
 - Read Normal File / HTML page
+- Keep-Alive Mechanism
 - Execute CGI program
 
 ## Environment
