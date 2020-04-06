@@ -72,7 +72,6 @@ int http_handle_request(int cfd, http_request_rec *request)
         fprintf(stderr, "select error\n");
         return -3;
     } else if (ret == 0) {
-        fprintf(stderr, "client timeout\n");
         return -1;
     }
 
