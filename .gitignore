@@ -1,2 +1,6 @@
+bin/ezhttpd
+
 *.swp
 *.o
+*.gdb_history
+*peda-session-*.txt

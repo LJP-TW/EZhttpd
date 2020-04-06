@@ -23,23 +23,33 @@ void http_destroy_request(http_request_rec *request)
 #ifdef DEBUG
     printf("[D] destroy request\n");
 #endif
-    if (request->req_path)
+    if (request->req_path) {
         free(request->req_path);
-    if (request->req_ext != NULL && request->req_ext != (char *)-1)
+        request->req_path = NULL;
+    }
+
+    if (request->req_ext != NULL && request->req_ext != (char *)-1) {
         free(request->req_ext);
+        request->req_ext = NULL;
+    }
 
     if (request->headers) {
         while (request->headers[i] != NULL) {
             free(request->headers[i++]);
         }
         free(request->headers);
+        request->headers = NULL;
     }
 
-    if (request->get_data)
+    if (request->get_data) {
         free(request->get_data);
+        request->get_data = NULL;
+    }
 
-    if (request->post_data)
+    if (request->post_data) {
         free(request->post_data);
+        request->post_data = NULL;
+    }
 #ifdef DEBUG
     printf("[D] destroy request OK\n");
 #endif
@@ -83,7 +93,7 @@ int http_handle_request(int cfd, http_request_rec *request)
         fprintf(stderr, "error during parsing the request\n");
         return -2;
     }
-
+    
     if (request->first_req) {
         request->first_req = 0;
         ret = http_search_header(request, "Connection", rbuf);

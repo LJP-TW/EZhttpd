@@ -142,6 +142,7 @@ int http_parser(char *req_buf, http_request_rec *hrr)
             goto PARSE_HEADER_ERROR;
 
         str = hrr->headers[header_cnt] = malloc(sizeof(char) * len);
+        memset(str, 0, len);
         strncpy(str, header_cur, tmp - header_cur);
         strncat(str, "=", 1);
         strncat(str, tmp + 2, tmp2 - (tmp + 2));
