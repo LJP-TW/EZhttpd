@@ -105,7 +105,9 @@ void http_respond(int cfd,
     }
 
     if (access(path, F_OK) != -1) {
-        if (!strncmp(request->req_ext, "html", 4)) {
+        if (!request->req_ext) {
+            goto OTHER_EXT;
+        } else if (!strncmp(request->req_ext, "html", 4)) {
             FILE *fp;
             char *fcontent;
 
@@ -210,6 +212,9 @@ void http_respond(int cfd,
                               NULL);
             /* cgi program can write some custom header */
 
+            // TODO: write to buf first, this buf may need resize
+            //       then calculate content-length and send this header
+            //       for keep-alive mechanism to work
             while (read(cgiout[0], &c, 1) > 0) {
                 write(cfd, &c, 1);
             }
@@ -224,6 +229,7 @@ void http_respond(int cfd,
             FILE *fp;
             char *fcontent;
 
+OTHER_EXT:
             fp = fopen(path, "rb");
             if (fp == NULL)
                 goto NOT_FOUND;
