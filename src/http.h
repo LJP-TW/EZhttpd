@@ -24,8 +24,8 @@ typedef enum _http_proto http_proto;
 #define HTTP_DEFAULT_TIMEOUT 5
 #define HTTP_KEEP_ALIVE_MAX 100
 #define HTTP_KEEP_ALIVE_MAX_STR "100"
-#define HTTP_KEEP_ALIVE_TIMEOUT 3
-#define HTTP_KEEP_ALIVE_TIMEOUT_STR "3"
+#define HTTP_KEEP_ALIVE_TIMEOUT 10
+#define HTTP_KEEP_ALIVE_TIMEOUT_STR "10"
 
 struct _http_request_rec {
     /* HTTP method */
