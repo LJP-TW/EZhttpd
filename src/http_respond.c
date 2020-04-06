@@ -5,6 +5,7 @@
 
 #include "http_respond.h"
 #include "cgi_preprocess.h"
+#include "ez_list.h"
 
 #define WRITE(X) write(cfd, X, strlen(X))
 #define WRITE_CONTENT_LENGTH(SIZE) \
@@ -13,6 +14,17 @@
     WRITE(CR_LF);
 #define HTTP_KEEP_ALIVE(TIMEOUT, MAX) \
     "Keep-Alive: timeout=" TIMEOUT ", max=" MAX "\r\n"
+
+#define MAX_BUF_LEN 0x1000
+
+/* States for counting content-length */
+enum CGI_STATES {
+    CS_INIT,
+    CS_R,
+    CS_RN,
+    CS_RNR,
+    CS_RNRN
+};
 
 const char STATE_200[] = " 200 Ok\r\n";
 const char STATE_404[] = " 404 Not Found\r\n";
@@ -143,10 +155,20 @@ void http_respond(int cfd,
             *status = 200;
             goto RESPOND_EXIT;
         } else if (!strncmp(request->req_ext, "cgi", 3)) {
-            int cgiin[2], cgiout[2];
+            char *now_data;
+            int cgiin[2], cgiout[2], now_len, cgi_state;
+            long content_len;
             pid_t cgi_pid;
-            char c;
             cgi_rec cr = { 0 };
+            ez_list *cgi_bufs, *now_cgi_bufs;
+            char c[1];
+
+            cgi_state = CS_INIT;
+            content_len = now_len = 0;
+
+            now_cgi_bufs = cgi_bufs = malloc(sizeof(ez_list));
+            now_data = cgi_bufs->data = malloc(sizeof(char) * MAX_BUF_LEN);
+            cgi_bufs->next = NULL;
 
             if (pipe(cgiin) == -1 || pipe(cgiout) == -1) {
                 fprintf(stderr, "create pipe error\n");
@@ -204,25 +226,92 @@ void http_respond(int cfd,
             if (cr.rmb != NULL)
                 write(cgiin[1], cr.rmb, strlen(cr.rmb));
 
+            /* write the output of cgi program to buf first
+             * then calculate content-length and send this header
+             * for keep-alive mechanism to work
+             */
+            while (read(cgiout[0], c, 1) > 0) {
+                now_data[now_len] = c[0]; 
+
+                switch (cgi_state) {
+                case CS_INIT:
+                    if (c[0] == '\r')
+                        cgi_state = CS_R;
+                    break;
+                case CS_R:
+                    if (c[0] == '\n')
+                        cgi_state = CS_RN;
+                    else
+                        cgi_state = CS_INIT;
+                    break;
+                case CS_RN:
+                    if (c[0] == '\r')
+                        cgi_state = CS_RNR;
+                    else
+                        cgi_state = CS_INIT;
+                    break;
+                case CS_RNR:
+                    if (c[0] == '\n')
+                        cgi_state = CS_RNRN;
+                    else
+                        cgi_state = CS_INIT;
+                    break;
+                case CS_RNRN:
+                    ++content_len;
+                    break;
+                }
+
+                ++now_len;
+                if (now_len == MAX_BUF_LEN) {
+                    /* create next node of singly linked list */
+                    now_cgi_bufs->next = malloc(sizeof(ez_list));
+
+                    /* goto next node */
+                    now_cgi_bufs = now_cgi_bufs->next;
+                    
+                    /* initial this node */
+                    now_data = now_cgi_bufs->data = malloc(MAX_BUF_LEN);
+                    now_cgi_bufs->next = NULL;
+
+                    /* re-count now_len */
+                    now_len = 0;
+                }
+            }
+
+            /* cgi program should write '\r\n\r\n' itself
+             * for now, server doesn't check this problem
+             */
+
+            s_fsize = malloc(0x70);
+            snprintf(s_fsize, 0x70, "%ld", content_len);
+
             http_send_headers(cfd, 
                               request, 
                               proto, 
                               STATE_200, 
                               NULL,
-                              NULL);
+                              s_fsize);
+
             /* cgi program can write some custom header */
 
-            // TODO: write to buf first, this buf may need resize
-            //       then calculate content-length and send this header
-            //       for keep-alive mechanism to work
-            while (read(cgiout[0], &c, 1) > 0) {
-                write(cfd, &c, 1);
+            now_cgi_bufs = cgi_bufs;
+            while (1) {
+                if (now_cgi_bufs->next) {
+                    write(cfd, now_cgi_bufs->data, MAX_BUF_LEN);     
+                    now_cgi_bufs = now_cgi_bufs->next;
+                } else {
+                    write(cfd, now_cgi_bufs->data, now_len);
+                    break;
+                }
             }
 
             // close unused fd
             close(cgiin[1]);
             close(cgiout[0]);
 
+            free(s_fsize);
+            ez_free_list(cgi_bufs);
+            cgi_rec_destroy(&cr);
             *status = 200;
             goto RESPOND_EXIT;
         } else {
