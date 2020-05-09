@@ -1,5 +1,8 @@
 #ifndef HTTP_H
 #define HTTP_H
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <sys/time.h>
 
 /* need to keep this enum same as http_methods at http_parser.c */
@@ -52,5 +55,10 @@ struct _http_request_rec {
     unsigned char keep_alive:1;
 };
 typedef struct _http_request_rec http_request_rec;
+
+union conn {
+    int cfd;
+    SSL *ssl;
+};
 
 #endif

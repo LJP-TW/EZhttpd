@@ -1,17 +1,15 @@
-#include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 #include <unistd.h>
 
 #include "http_respond.h"
-#include "cgi_preprocess.h"
+#include "cgi/cgi_preprocess.h"
 #include "ez_list.h"
 
-#define WRITE(X) write(cfd, X, strlen(X))
-#define WRITE_CONTENT_LENGTH(SIZE) \
-    WRITE(CONTENT_LENGTH); \
-    WRITE(SIZE); \
-    WRITE(CR_LF);
+#define WRITE(fd, X) http_write(fd, X, strlen(X))
+#define WRITE_CONTENT_LENGTH(fd, SIZE) \
+    WRITE(fd, CONTENT_LENGTH); \
+    WRITE(fd, SIZE); \
+    WRITE(fd, CR_LF);
 #define HTTP_KEEP_ALIVE(TIMEOUT, MAX) \
     "Keep-Alive: timeout=" TIMEOUT ", max=" MAX "\r\n"
 
@@ -43,6 +41,9 @@ const char CR_LF[] = "\r\n";
 const char BODY_404[] = "<h1>Not Found, 88888</h1>";
 const char BODY_500[] = "<h1>Internal Server Error</h1>";
 
+typedef ssize_t (*write_method_proto) (long long __fd, const void *__buf, size_t __n);
+write_method_proto http_write;
+
 static inline
 char* complete_path(http_request_rec *request, char *root)
 {
@@ -59,42 +60,50 @@ char* complete_path(http_request_rec *request, char *root)
 }
 
 static inline
-void http_send_headers(int cfd,
+void http_send_headers(long long fd,
                        http_request_rec *request, 
                        const char *proto, 
                        const char *state,
                        const char *content_type,
                        const char *content_length)
 {
-    WRITE(proto);
-    WRITE(state);
-    WRITE(SERVER);
+    WRITE(fd, proto);
+    WRITE(fd, state);
+    WRITE(fd, SERVER);
 
     if (content_type)
-        WRITE(content_type);
+        WRITE(fd, content_type);
 
-    if (request->keep_alive) {
-        WRITE(CONNECTION_KEEP_ALIVE);
-        // WRITE(KEEP_ALIVE);
-    }
+    if (request->keep_alive)
+        WRITE(fd, CONNECTION_KEEP_ALIVE);
 
     if (content_length)
-        WRITE_CONTENT_LENGTH(content_length);
+        WRITE_CONTENT_LENGTH(fd, content_length);
 }
 
-void http_respond(int cfd, 
+void http_respond(union conn client, 
                   http_request_rec *request, 
-                  char *root, 
+                  server_config_rec *sc,
                   struct sockaddr_in *c_addr_ptr,
                   int *status)
 {
     const char *proto;
     char *path;
     char *s_fsize;
+    long long fd;
     long fsize;
 
+    if (sc->enable_ssl) {
+        http_write = (write_method_proto) SSL_write;
+        fd = (long long)client.ssl;
+    }
+    else {
+        http_write = (write_method_proto) write;
+        fd = client.cfd;
+    }
+
     proto = http_protos[request->proto]; 
-    path = complete_path(request, root);
+    path = complete_path(request, sc->web_root);
 
     if (request->req_ext == (char *)-1) {
         /* path is a directory */
@@ -102,14 +111,14 @@ void http_respond(int cfd,
         s_fsize = malloc(0x70);
         snprintf(s_fsize, 0x70, "%ld", strlen(BODY_404));
 
-        http_send_headers(cfd, 
+        http_send_headers(fd, 
                           request, 
                           proto, 
                           STATE_404, 
                           CONTENT_TYPE_HTML,
                           s_fsize);
-        WRITE(CR_LF);
-        WRITE(BODY_404);
+        WRITE(fd, CR_LF);
+        WRITE(fd, BODY_404);
 
         free(s_fsize);
         *status = 404;
@@ -141,14 +150,14 @@ void http_respond(int cfd,
 
             fcontent[fsize] = 0;
 
-            http_send_headers(cfd, 
+            http_send_headers(fd, 
                               request, 
                               proto, 
                               STATE_200, 
                               CONTENT_TYPE_HTML,
                               s_fsize);
-            WRITE(CR_LF);
-            write(cfd, fcontent, fsize);
+            WRITE(fd, CR_LF);
+            http_write(fd, fcontent, fsize);
 
             free(s_fsize);
             free(fcontent);
@@ -285,7 +294,7 @@ void http_respond(int cfd,
             s_fsize = malloc(0x70);
             snprintf(s_fsize, 0x70, "%ld", content_len);
 
-            http_send_headers(cfd, 
+            http_send_headers(fd, 
                               request, 
                               proto, 
                               STATE_200, 
@@ -297,10 +306,10 @@ void http_respond(int cfd,
             now_cgi_bufs = cgi_bufs;
             while (1) {
                 if (now_cgi_bufs->next) {
-                    write(cfd, now_cgi_bufs->data, MAX_BUF_LEN);     
+                    http_write(fd, now_cgi_bufs->data, MAX_BUF_LEN);     
                     now_cgi_bufs = now_cgi_bufs->next;
                 } else {
-                    write(cfd, now_cgi_bufs->data, now_len);
+                    http_write(fd, now_cgi_bufs->data, now_len);
                     break;
                 }
             }
@@ -337,14 +346,14 @@ OTHER_EXT:
 
             fcontent[fsize] = 0;
 
-            http_send_headers(cfd, 
+            http_send_headers(fd, 
                               request, 
                               proto, 
                               STATE_200, 
                               CONTENT_TYPE_PLAIN,
                               s_fsize);
-            WRITE(CR_LF);
-            write(cfd, fcontent, fsize);
+            WRITE(fd, CR_LF);
+            http_write(fd, fcontent, fsize);
 
             free(s_fsize);
             free(fcontent);
@@ -357,14 +366,14 @@ NOT_FOUND:
         s_fsize = malloc(0x70);
         snprintf(s_fsize, 0x70, "%ld", strlen(BODY_404));
 
-        http_send_headers(cfd, 
+        http_send_headers(fd, 
                           request, 
                           proto, 
                           STATE_404, 
                           CONTENT_TYPE_HTML,
                           s_fsize);
-        WRITE(CR_LF);
-        WRITE(BODY_404);
+        WRITE(fd, CR_LF);
+        WRITE(fd, BODY_404);
 
         free(s_fsize);
         *status = 404;
@@ -376,14 +385,14 @@ RESPOND_INTERNEL_ERROR:
         s_fsize = malloc(0x70);
         snprintf(s_fsize, 0x70, "%ld", strlen(BODY_500));
 
-        http_send_headers(cfd, 
+        http_send_headers(fd, 
                           request, 
                           proto, 
                           STATE_500, 
                           CONTENT_TYPE_HTML,
                           s_fsize);
-        WRITE(CR_LF);
-        WRITE(BODY_500);
+        WRITE(fd, CR_LF);
+        WRITE(fd, BODY_500);
 
         free(s_fsize);
         *status = 500;

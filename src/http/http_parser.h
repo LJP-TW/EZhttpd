@@ -1,7 +1,7 @@
 #ifndef HTTP_PARSER_H
 #define HTTP_PARSER_H
+
 #include "http.h"
-#include "http_request.h"
 
 /* @req_buf: point to request plaintext 
  * @hrr: point to http_request_rec that will store the parsed information 

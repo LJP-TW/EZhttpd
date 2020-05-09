@@ -1,11 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <strings.h>
-#include <unistd.h>
 
 #include "http_request.h"
+#include "http_parser.h"
 
 #define MAX_BUF_LEN 0x10000
 
@@ -55,14 +52,17 @@ void http_destroy_request(http_request_rec *request)
 #endif
 }
 
-int http_handle_request(int cfd, http_request_rec *request)
+int http_handle_request(union conn client, http_request_rec *request, int enable_ssl)
 {
     fd_set fds, read_fds;
     int ret;
     char rbuf[MAX_BUF_LEN];
 
     FD_ZERO(&fds);
-    FD_SET(cfd, &fds);
+    if (enable_ssl)
+        FD_SET(SSL_get_fd(client.ssl), &fds);
+    else
+        FD_SET(client.cfd, &fds);
     read_fds = fds;
 
     /* check whether timeout */
@@ -75,7 +75,10 @@ int http_handle_request(int cfd, http_request_rec *request)
         return -1;
     }
 
-    ret = recv(cfd, rbuf, MAX_BUF_LEN, 0);
+    if (enable_ssl)
+        ret = SSL_read(client.ssl, rbuf, MAX_BUF_LEN);
+    else
+        ret = recv(client.cfd, rbuf, MAX_BUF_LEN, 0);
 
     if (ret == -1) {
         fprintf(stderr, "recv error\n");

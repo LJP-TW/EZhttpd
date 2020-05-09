@@ -1,10 +1,9 @@
 #ifndef CGI_PREPROCESS_H
 #define CGI_PREPROCESS_H
 
-#include <sys/socket.h>
 #include <netinet/in.h>
 
-#include "http_parser.h"
+#include "http/http_parser.h"
 
 /* Request Meta-Variables 
  * the order cannot be changed!

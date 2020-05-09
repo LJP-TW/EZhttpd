@@ -1,0 +1,4 @@
+ENABLE_SSL=0
+SERVER_CERT=./keys/server-cert.pem
+SERVER_PKEY=./keys/server-key.pem
+WEB_ROOT=www/

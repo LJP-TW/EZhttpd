@@ -1,88 +1,29 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
 #include <unistd.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <string.h>
-#include <strings.h>
-#include <time.h>
-#include <dirent.h>
-#include <unistd.h>
-#include <sys/prctl.h>
 #include <signal.h>
+#include <sys/prctl.h>
 
-#include "http_request.h"
-#include "http_parser.h"
-#include "http_respond.h"
-#include "cgi_preprocess.h"
-#include "debug.h"
+#include "http/http_request.h"
+#include "http/http_parser.h"
+#include "http/http_respond.h"
+#include "cgi/cgi_preprocess.h"
+#include "debug/debug.h"
+#include "ssl/ez_server.h"
+#include "ssl/general_ssl.h"
 
-#define MAX_CONNECTION 100000
-
-void respond(int, struct sockaddr_in *);
+void respond(union conn, struct sockaddr_in *, server_config_rec *sc);
 void ez_log(int, http_request_rec *, struct sockaddr_in *);
-
-char *root;
 
 int main(int argc, char **argv)
 { 
-    struct sockaddr_in s_addr;
-    in_addr_t ip;
-    int sfd, len;
-    int t = 1;
+    SSL_CTX *ctx = NULL;
+    server_parameters *sp = NULL;
+    server_config_rec *sc = NULL;
+    int sfd;
 
-    if (argc < 4) {
-        printf("usage: ./ezhttpd [ipv4] [port] [root]");
-        exit(EXIT_FAILURE);
-    }
+    server_init(argc, argv, &sp, &sc, &ctx);
 
-    len = strlen(argv[3]);
-    if (argv[3][len - 1] != '/') {
-        root = malloc(len + 2);
-        memset(root, 0, len + 2);
-        strcat(root, argv[3]);
-        root[len] = '/';
-    } else {
-        root = strdup(argv[3]);
-    }
-
-    sfd = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (sfd == -1) {
-        fprintf(stderr, "socket error\n");
-        exit(EXIT_FAILURE);
-    }
-
-    /* set SO_REUSEADDR, check out this link for detail:
-     *   https://stackoverflow.com/questions/10619952/how-to-completely-destroy-a-socket-connection-in-c 
-     */
-    if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &t, sizeof(int)) == -1) {
-        fprintf(stderr, "setsockopt error\n");
-        exit(EXIT_FAILURE);
-    }
-
-    bzero(&s_addr, sizeof(s_addr));
-    s_addr.sin_family = PF_INET;
-    s_addr.sin_addr.s_addr = ip = inet_addr(argv[1]);
-    s_addr.sin_port = htons(atoi(argv[2]));
-
-    if (ip == INADDR_NONE) {
-        fprintf(stderr, "inet_addr error: ip %s is invalid\n", argv[1]);
-        exit(EXIT_FAILURE);
-    }
-    
-    if (bind(sfd, (struct sockaddr *)&s_addr, sizeof(s_addr)) == -1) {
-        fprintf(stderr, "bind error\n");
-        exit(EXIT_FAILURE);
-    }
-
-    if (listen(sfd, MAX_CONNECTION)) {
-        fprintf(stderr, "listen error\n");
-        exit(EXIT_FAILURE);
-    }
+    sfd = server_create_socket(sp);
 
     /* when child process exit, just let it be deleted, 
      * preventing zombie process */
@@ -105,26 +46,31 @@ int main(int argc, char **argv)
         /* create a new process to handle request */
         if ((pid = fork()) < 0) {
             fprintf(stderr, "fork error\n");
-            close(cfd);
-            continue;
-        }
-        else if (pid == 0) {
+        } else if (pid == 0) {
             /* when parent exit, childs also exit */
+            union conn client;
+
             prctl(PR_SET_PDEATHSIG, SIGHUP);
             close(sfd);
 
-            respond(cfd, &c_addr);
+            if (sc->enable_ssl) {
+                client.ssl = server_create_ssl_connect(cfd, ctx);
+            } else {
+                client.cfd = cfd;
+            }
 
-            close(cfd);
-
+            respond(client, &c_addr, sc);
             exit(0);
-        } else {
-            close(cfd);
         }
+
+        close(cfd);
     }
+
+    close(sfd);
+    SSL_CTX_free(ctx);
 }
 
-void respond(int cfd, struct sockaddr_in *c_addr_ptr)
+void respond(union conn client, struct sockaddr_in *c_addr_ptr, server_config_rec *sc)
 {
     int ret, status;
     http_request_rec request = { 0 };
@@ -132,7 +78,7 @@ void respond(int cfd, struct sockaddr_in *c_addr_ptr)
     http_init_request(&request);
 
     while (1) {
-        ret = http_handle_request(cfd, &request);
+        ret = http_handle_request(client, &request, sc->enable_ssl);
 
         switch (ret) {
         case -1:
@@ -149,7 +95,11 @@ void respond(int cfd, struct sockaddr_in *c_addr_ptr)
         DEBUG_REQUEST_INFO;
 #endif
 
-        http_respond(cfd, &request, root, c_addr_ptr, &status);
+        http_respond(client, 
+                     &request, 
+                     sc, 
+                     c_addr_ptr,
+                     &status);
 
         /* log */
         ez_log(status, &request, c_addr_ptr);
@@ -168,8 +118,6 @@ RESPOND_EXIT:
     printf("[T] close TCP connection\n");
 #endif
     http_destroy_request(&request);
-
-    return;
 }
 
 inline 

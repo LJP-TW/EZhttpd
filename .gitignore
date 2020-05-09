@@ -4,3 +4,5 @@ bin/ezhttpd
 *.o
 *.gdb_history
 *peda-session-*.txt
+
+.ycm_extra_conf.py
