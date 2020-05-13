@@ -21,6 +21,8 @@ struct _server_config_rec {
     /* DON'T CHANGE order of above config */
     char *web_root;
     unsigned char enable_ssl:1;
+    unsigned char list_files:1;
+    unsigned char downloadable:1;
 };
 
 typedef struct _server_config_rec server_config_rec;

@@ -1,5 +1,6 @@
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include "http_respond.h"
 #include "cgi/cgi_preprocess.h"
@@ -14,6 +15,7 @@
     "Keep-Alive: timeout=" TIMEOUT ", max=" MAX "\r\n"
 
 #define MAX_BUF_LEN 0x1000
+#define MAX_FILENAME_LEN 0x78
 
 /* States for counting content-length */
 enum CGI_STATES {
@@ -29,8 +31,9 @@ const char STATE_404[] = " 404 Not Found\r\n";
 const char STATE_500[] = " 500 Internal Server Error\r\n";
 
 const char SERVER[] = "Server: ezhttpd\r\n";
-const char CONTENT_TYPE_HTML[] = "Content-Type: text/html\r\n";
-const char CONTENT_TYPE_PLAIN[] = "Content-Type: text/plain\r\n";
+const char CONTENT_TYPE_HTML[]   = "Content-Type: text/html\r\n";
+const char CONTENT_TYPE_PLAIN[]  = "Content-Type: text/plain\r\n";
+const char CONTENT_TYPE_OCTECT[] = "Content-Type: application/octect-stream\r\n";
 const char CONNECTION_KEEP_ALIVE[] = "Connection: keep-alive\r\n";
 const char KEEP_ALIVE[] = HTTP_KEEP_ALIVE(HTTP_KEEP_ALIVE_TIMEOUT_STR, 
                                           HTTP_KEEP_ALIVE_MAX_STR);
@@ -40,6 +43,19 @@ const char CR_LF[] = "\r\n";
 
 const char BODY_404[] = "<h1>Not Found, 88888</h1>";
 const char BODY_500[] = "<h1>Internal Server Error</h1>";
+
+const char pre_ul[]   = "<ul>";
+const char post_ul[]  = "</ul>";
+const int pre_ul_len  = sizeof(pre_ul) - 1;
+const int post_ul_len = sizeof(post_ul) - 1;
+
+const char pre_li[]   = "<li>";
+const char post_li[]  = "</li>";
+const int pre_li_len  = sizeof(pre_li) - 1;
+const int post_li_len = sizeof(post_li) - 1;
+
+const char http_title[]  = "<h1>EZhttpd</h1>";
+const int http_title_len = sizeof(http_title) - 1;
 
 typedef ssize_t (*write_method_proto) (long long __fd, const void *__buf, size_t __n);
 write_method_proto http_write;
@@ -107,22 +123,72 @@ void http_respond(union conn client,
 
     if (request->req_ext == (char *)-1) {
         /* path is a directory */
-        /* TODO: list directory */
-        s_fsize = malloc(0x70);
-        snprintf(s_fsize, 0x70, "%ld", strlen(BODY_404));
+        if (sc->list_files) {
+            DIR *d;
+            struct dirent *dir;
+            ez_list *li_buf = NULL, *now_li_buf = NULL;
+            char *now_data = NULL;
+            unsigned int fsize = 0;
 
-        http_send_headers(fd, 
-                          request, 
-                          proto, 
-                          STATE_404, 
-                          CONTENT_TYPE_HTML,
-                          s_fsize);
-        WRITE(fd, CR_LF);
-        WRITE(fd, BODY_404);
+            if ((d = opendir(path)) == NULL)
+                goto NOT_FOUND;
 
-        free(s_fsize);
-        *status = 404;
-        goto RESPOND_EXIT;
+            fsize += pre_ul_len + post_ul_len + http_title_len;
+
+            while ((dir = readdir(d)) != NULL) {
+                if (!li_buf) {
+                    now_li_buf = li_buf = malloc(sizeof(ez_list));
+                } else {
+                    now_li_buf = now_li_buf->next = malloc(sizeof(ez_list));
+                }
+                now_data = now_li_buf->data = malloc(sizeof(char) * MAX_FILENAME_LEN);
+                now_li_buf->next = NULL;
+                
+                strncpy(now_data, dir->d_name, MAX_FILENAME_LEN - 1);
+                fsize += pre_li_len + post_li_len;
+                fsize += strlen(now_data);
+            }
+            closedir(d);
+            
+            s_fsize = malloc(0x70);
+            snprintf(s_fsize, 0x70, "%u", fsize);
+
+            http_send_headers(fd, 
+                              request, 
+                              proto, 
+                              STATE_200, 
+                              CONTENT_TYPE_HTML,
+                              s_fsize);
+            WRITE(fd, CR_LF);
+            WRITE(fd, http_title);
+            WRITE(fd, pre_ul);
+
+            for (now_li_buf = li_buf; now_li_buf; now_li_buf = now_li_buf->next) {
+                WRITE(fd, pre_li);
+                WRITE(fd, now_li_buf->data);
+                WRITE(fd, post_li);
+            }
+
+            WRITE(fd, post_ul);
+
+            ez_free_list(li_buf);
+        } else {
+            s_fsize = malloc(0x70);
+            snprintf(s_fsize, 0x70, "%ld", strlen(BODY_404));
+
+            http_send_headers(fd, 
+                              request, 
+                              proto, 
+                              STATE_404, 
+                              CONTENT_TYPE_HTML,
+                              s_fsize);
+            WRITE(fd, CR_LF);
+            WRITE(fd, BODY_404);
+
+            free(s_fsize);
+            *status = 404;
+            goto RESPOND_EXIT;
+        }
     }
 
     if (access(path, F_OK) != -1) {
@@ -326,6 +392,7 @@ void http_respond(union conn client,
         } else {
             FILE *fp;
             char *fcontent;
+            const char *content_type;
 
 OTHER_EXT:
             fp = fopen(path, "rb");
@@ -346,11 +413,13 @@ OTHER_EXT:
 
             fcontent[fsize] = 0;
 
+            content_type = sc->downloadable ? CONTENT_TYPE_OCTECT : CONTENT_TYPE_PLAIN;
+
             http_send_headers(fd, 
                               request, 
                               proto, 
                               STATE_200, 
-                              CONTENT_TYPE_PLAIN,
+                              content_type,
                               s_fsize);
             WRITE(fd, CR_LF);
             http_write(fd, fcontent, fsize);

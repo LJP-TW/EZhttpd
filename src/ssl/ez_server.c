@@ -81,10 +81,7 @@ void server_parse_config_file(server_parameters *sp, server_config_rec *sc)
         //     strcat(sc->CA_cert_file, val);
         // }
         if (strncmp("ENABLE_SSL", name, 10) == 0) {
-            if (val[0] == '1')
-                sc->enable_ssl = 1;
-            else
-                sc->enable_ssl = 0;
+            sc->enable_ssl = val[0] == '1' ? 1 : 0;
         } else if (strncmp("SERVER_CERT", name, 11) == 0) {
             sc->server_cert_file = malloc(0x80);
             memset(sc->server_cert_file, 0, 0x80);
@@ -97,6 +94,10 @@ void server_parse_config_file(server_parameters *sp, server_config_rec *sc)
             sc->web_root = malloc(0x80);
             memset(sc->web_root, 0, 0x80);
             strcat(sc->web_root, val);
+        } else if (strncmp("LIST_FILES", name, 10) == 0) {
+            sc->list_files = val[0] == '1' ? 1 : 0;
+        } else if (strncmp("DOWNLOADABLE", name, 12) == 0) {
+            sc->downloadable = val[0] == '1' ? 1 : 0;
         }
     }
 }

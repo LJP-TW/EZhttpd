@@ -36,6 +36,8 @@ open your browser to view index.html ;)
 | SERVER_CERT |  Path of server certificate | SERVER_CERT=./keys/server-cert.pem |
 | SERVER_PKEY |  Path of server private key | SERVER_PKEY=./keys/server-key.pem |
 | WEB_ROOT | Root of web directory | WEB_ROOT=www/ |
+| LIST_FILES | Set it to 1 to list files in dir | LIST_FILES=1 |
+| DOWNLOADABLE | Set it to 1 to make file downloadable | DOWNLOADABLE=1 |
 
 ## CGI
 There are many testing cgi program in www/cgi-bin, and their source codes are in www/cgi-src
