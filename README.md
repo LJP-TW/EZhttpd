@@ -12,6 +12,7 @@ Support:
 
 ## Build
 ```
+sudo apt-get install libssl-dev
 git clone https://github.com/LJP-TW/EZhttpd.git
 cd EZhttpd
 make
