@@ -171,7 +171,11 @@ void http_respond(union conn client,
 
             WRITE(fd, post_ul);
 
+            *status = 200;
+
             ez_free_list(li_buf);
+
+            goto RESPOND_EXIT;
         } else {
             s_fsize = malloc(0x70);
             snprintf(s_fsize, 0x70, "%ld", strlen(BODY_404));
